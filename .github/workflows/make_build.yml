@@ -42,12 +42,14 @@ jobs:
           INPUTS: ${{ toJSON(inputs) }}
         run: |
           add_target() {
-            [[ $(jq -r ".build_$1" <<<"$INPUTS") == true ]] &&
+            if [[ $(jq -r ".build_$1" <<<"$INPUTS") == true ]]; then
               targets=$(jq -c ". + [{platform:\"$2\",arch:\"$3\",os:\"$4\"}]" <<<"$targets")
+            fi
           }
           add_godot() {
-            [[ $(jq -r ".build_godot_${1//./_}" <<<"$INPUTS") == true ]] &&
+            if [[ $(jq -r ".build_godot_${1//./_}" <<<"$INPUTS") == true ]]; then
               godot_versions=$(jq -c ". + [{api_version:\"$1\",godot_version:\"$2\"}]" <<<"$godot_versions")
+            fi
           }
 
           targets='[]'
