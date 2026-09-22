@@ -20,47 +20,38 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       godot_versions: ${{ steps.select.outputs.godot_versions }}
-      has_godot_versions: ${{ steps.select.outputs.has_godot_versions }}
       documentation_suffix: ${{ steps.select.outputs.documentation_suffix }}
     steps:
       - id: select
         shell: bash
         env:
-          BUILD_GODOT_4_5: ${{ inputs.build_godot_4_5 }}
-          BUILD_GODOT_4_6: ${{ inputs.build_godot_4_6 }}
-          BUILD_GODOT_4_7: ${{ inputs.build_godot_4_7 }}
-          INCLUDE_DOCUMENTATION: ${{ inputs.include_documentation }}
+          INPUTS: ${{ toJSON(inputs) }}
         run: |
           set -euo pipefail
 
+          add_godot() {
+            if [[ $(jq -r ".build_godot_${1//./_}" <<<"$INPUTS") == true ]]; then
+              godot_versions=$(jq -c ". + [{api_version:\"$1\",godot_version:\"$2\"}]" <<<"$godot_versions")
+            fi
+          }
+
           godot_versions='[]'
-          if [[ "$BUILD_GODOT_4_5" == "true" ]]; then
-            godot_versions=$(jq -c '. + [{"api_version":"4.5","godot_version":"4.5.2"}]' <<<"$godot_versions")
-          fi
-          if [[ "$BUILD_GODOT_4_6" == "true" ]]; then
-            godot_versions=$(jq -c '. + [{"api_version":"4.6","godot_version":"4.6.3"}]' <<<"$godot_versions")
-          fi
-          if [[ "$BUILD_GODOT_4_7" == "true" ]]; then
-            godot_versions=$(jq -c '. + [{"api_version":"4.7","godot_version":"4.7.1"}]' <<<"$godot_versions")
+          add_godot 4.5 4.5.2
+          add_godot 4.6 4.6.3
+          add_godot 4.7 4.7.2
+
+          suffix=without-docs
+          if [[ $(jq -r .include_documentation <<<"$INPUTS") == true ]]; then
+            suffix=with-docs
           fi
 
           echo "godot_versions=$godot_versions" >> "$GITHUB_OUTPUT"
-          if [[ "$godot_versions" == "[]" ]]; then
-            echo "has_godot_versions=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_godot_versions=true" >> "$GITHUB_OUTPUT"
-          fi
-
-          if [[ "$INCLUDE_DOCUMENTATION" == "true" ]]; then
-            echo "documentation_suffix=with-docs" >> "$GITHUB_OUTPUT"
-          else
-            echo "documentation_suffix=without-docs" >> "$GITHUB_OUTPUT"
-          fi
+          echo "documentation_suffix=$suffix" >> "$GITHUB_OUTPUT"
 
   build:
     name: Godot ${{ matrix.godot.api_version }} (${{ needs.prepare.outputs.documentation_suffix }})
     needs: prepare
-    if: ${{ needs.prepare.outputs.has_godot_versions == 'true' }}
+    if: ${{ needs.prepare.outputs.godot_versions != '[]' }}
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false

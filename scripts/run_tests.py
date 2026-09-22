@@ -66,17 +66,12 @@ DEFAULT_BACKENDS = "lua,quickjs,v8"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run runtime tests for puerts-godot.")
-    parser.add_argument("--godot", required=True, help="Path to the Godot executable.")
+    parser.add_argument("--godot", required=True, help="Path to the Godot executable, or a command name on PATH.")
     parser.add_argument(
         "--platform",
         default="",
         choices=["", "windows", "macos", "linux", "android", "ios", "web"],
         help="Target Godot platform in CI. Empty means detect from host OS.",
-    )
-    parser.add_argument(
-        "--project",
-        default=str(Path(__file__).resolve().parents[1] / "tests"),
-        help="Path to the Godot project directory.",
     )
     parser.add_argument(
         "--backends",
@@ -96,6 +91,14 @@ def detect_platform() -> str:
     if system == "linux":
         return "linux"
     return ""
+
+
+def resolve_godot(value: str) -> Path | None:
+    candidate = Path(value).expanduser()
+    if candidate.is_file():
+        return candidate.resolve()
+    found = shutil.which(value)
+    return Path(found) if found else None
 
 
 def sync_binaries(build_bin_dir: Path, project_bin_dir: Path) -> int:
@@ -341,17 +344,13 @@ SUMMARY_PATTERN = re.compile(r"^\[mini-test\] summary .*failed=(\d+)\b")
 
 
 def _terminate_process(proc: subprocess.Popen[str]) -> None:
-    try:
-        proc.terminate()
-        proc.wait(timeout=3)
-        return
-    except Exception:
-        pass
-    try:
-        proc.kill()
-        proc.wait(timeout=3)
-    except Exception:
-        pass
+    for action in (proc.terminate, proc.kill):
+        try:
+            action()
+            proc.wait(timeout=3)
+            return
+        except Exception:
+            pass
 
 
 def run_with_timeout(command: list[str], cwd: Path, timeout: float, env: dict[str, str]) -> int:
@@ -419,8 +418,7 @@ def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
     build_bin_dir = root / "bin"
-    godot_exe = Path(args.godot).expanduser().resolve()
-    project_dir = Path(args.project).expanduser().resolve()
+    project_dir = root / "tests"
     project_bin_dir = project_dir / "bin"
     platform_name = args.platform or detect_platform()
     process_env = dict(os.environ)
@@ -446,8 +444,9 @@ def main() -> int:
         print(f"[test-runner] skip: runtime tests are not supported on platform={platform_name}")
         return 0
 
-    if not godot_exe.is_file():
-        print(f"[test-runner] Godot executable not found: {godot_exe}", file=sys.stderr)
+    godot_exe = resolve_godot(args.godot)
+    if godot_exe is None:
+        print(f"[test-runner] Godot executable not found: {args.godot}", file=sys.stderr)
         return 2
     if not project_dir.is_dir():
         print(f"[test-runner] Project directory not found: {project_dir}", file=sys.stderr)

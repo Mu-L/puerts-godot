@@ -40,46 +40,19 @@ if env["platform"] == "windows":
 
 
 class ProjectInfo:
-    def __init__(self, project_name, source_dir, backend_dir, libs, extra_sources=None):
+    def __init__(self, project_name, source_dir, backend_dir, lib_name):
         self.project_name = project_name
         self.source_dir = source_dir
         self.backend_dir = backend_dir
-        self.libs = libs
-        self.extra_sources = extra_sources or []
+        self.lib_name = lib_name
 
 
 project_infos = [
-    ProjectInfo(
-        project_name="PuertsCore",
-        source_dir="PuertsCore",
-        backend_dir="puerts",
-        libs=["PuertsCore"],
-        extra_sources=[],
-    ),
-    ProjectInfo(
-        project_name="PuertsV8",
-        source_dir="PuertsV8",
-        backend_dir="papi-v8",
-        libs=["PapiV8"],
-    ),
-    ProjectInfo(
-        project_name="PuertsNodejs",
-        source_dir="PuertsNodejs",
-        backend_dir="papi-nodejs",
-        libs=["PapiNodejs"],
-    ),
-    ProjectInfo(
-        project_name="PuertsQuickjs",
-        source_dir="PuertsQuickjs",
-        backend_dir="papi-quickjs",
-        libs=["PapiQuickjs"],
-    ),
-    ProjectInfo(
-        project_name="PuertsLua",
-        source_dir="PuertsLua",
-        backend_dir="papi-lua",
-        libs=["PapiLua"],
-    ),
+    ProjectInfo("PuertsCore", "PuertsCore", "puerts", "PuertsCore"),
+    ProjectInfo("PuertsV8", "PuertsV8", "papi-v8", "PapiV8"),
+    ProjectInfo("PuertsNodejs", "PuertsNodejs", "papi-nodejs", "PapiNodejs"),
+    ProjectInfo("PuertsQuickjs", "PuertsQuickjs", "papi-quickjs", "PapiQuickjs"),
+    ProjectInfo("PuertsLua", "PuertsLua", "papi-lua", "PapiLua"),
 ]
 
 available_backends = supported_backends(env["platform"])
@@ -94,14 +67,26 @@ EASTL_SOURCES = [
     os.path.join("thirdparty", "EASTL", "source", "fixed_pool.cpp"),
     os.path.join("thirdparty", "EASTL", "source", "numeric_limits.cpp"),
 ]
-EASTL_IOS_SUPPLEMENTAL_SOURCES = [
-    # thirdparty/puerts/unity/native/puerts/CMakeLists.txt builds hashtable.cpp
-    # into libPuertsCore.a on iOS, so only supplement missing objects here.
-    os.path.join("thirdparty", "EASTL", "source", "fixed_pool.cpp"),
-    os.path.join("thirdparty", "EASTL", "source", "numeric_limits.cpp"),
-]
+# thirdparty/puerts/unity/native/puerts/CMakeLists.txt builds hashtable.cpp
+# into libPuertsCore.a on iOS, so only supplement missing objects there.
+EASTL_IOS_SUPPLEMENTAL_SOURCES = [s for s in EASTL_SOURCES if "hashtable" not in s]
 
 default_args = []
+
+
+def fail_missing_puerts_artifact(path):
+    puerts_config = "Debug" if env["target"] != "template_release" else "Release"
+    print_error(
+        "Missing puerts artifact: "
+        + path
+        + "\nRun: python scripts/make_puerts.py --platform "
+        + env["platform"]
+        + " --arch "
+        + env["arch"]
+        + " --config "
+        + puerts_config
+    )
+    sys.exit(1)
 
 
 def _ensure_loader_rpath_action(target, source=None, env=None, **_kwargs):
@@ -144,24 +129,14 @@ for project_info in project_infos:
             godot_arch=env["arch"],
             godot_target=env["target"],
             backend_dir=project_info.backend_dir,
-            lib_name=project_info.libs[0],
+            lib_name=project_info.lib_name,
         )
     except ValueError as error:
         print_error(str(error))
         sys.exit(1)
 
     if not os.path.isdir(lib_path):
-        print_error(
-            "Missing puerts build directory: "
-            + lib_path
-            + "\nRun: python scripts/make_puerts.py --platform "
-            + env["platform"]
-            + " --arch "
-            + env["arch"]
-            + " --config "
-            + ("Debug" if env["target"] != "template_release" else "Release")
-        )
-        sys.exit(1)
+        fail_missing_puerts_artifact(lib_path)
 
     project_env = env.Clone()
     project_env.Append(LIBPATH=[lib_path])
@@ -180,17 +155,9 @@ for project_info in project_infos:
             backend_dir=project_info.backend_dir,
             puerts_arch=puerts_arch,
         )
-        main_archive = os.path.join(lib_path, f"lib{project_info.libs[0]}.a")
-        if project_info.libs and not os.path.isfile(main_archive):
-            print_error(
-                "Missing puerts iOS main static archive: "
-                + main_archive
-                + "\nRun: python scripts/make_puerts.py --platform ios --arch "
-                + env["arch"]
-                + " --config "
-                + ("Debug" if env["target"] != "template_release" else "Release")
-            )
-            sys.exit(1)
+        main_archive = os.path.join(lib_path, f"lib{project_info.lib_name}.a")
+        if not os.path.isfile(main_archive):
+            fail_missing_puerts_artifact(main_archive)
         link_archives = [main_archive]
         if project_info.backend_dir != "puerts":
             puerts_core_lib_path, _ = resolve_puerts_paths(
@@ -203,15 +170,7 @@ for project_info in project_infos:
             )
             puerts_core_archive = os.path.join(puerts_core_lib_path, "libPuertsCore.a")
             if not os.path.isfile(puerts_core_archive):
-                print_error(
-                    "Missing puerts iOS core static archive: "
-                    + puerts_core_archive
-                    + "\nRun: python scripts/make_puerts.py --platform ios --arch "
-                    + env["arch"]
-                    + " --config "
-                    + ("Debug" if env["target"] != "template_release" else "Release")
-                )
-                sys.exit(1)
+                fail_missing_puerts_artifact(puerts_core_archive)
             link_archives.append(puerts_core_archive)
         if missing_patterns:
             print_error(
@@ -224,10 +183,9 @@ for project_info in project_infos:
         link_archives.extend(ios_archives)
         project_env.Append(LINKFLAGS=[f"-Wl,-force_load,{archive}" for archive in link_archives])
     else:
-        project_env.Append(LIBS=project_info.libs)
+        project_env.Append(LIBS=[project_info.lib_name])
 
     sources = Glob("src/{}/*.cpp".format(project_info.source_dir))
-    sources.extend(project_info.extra_sources)
     if project_info.backend_dir == "puerts":
         if env["platform"] == "ios":
             # iOS libPuertsCore.a already carries part of EASTL (e.g. hashtable.cpp).
@@ -266,17 +224,7 @@ for project_info in project_infos:
 
     if runtime_binary:
         if not os.path.isfile(runtime_binary):
-            print_error(
-                "Missing puerts runtime binary: "
-                + runtime_binary
-                + "\nRun: python scripts/make_puerts.py --platform "
-                + env["platform"]
-                + " --arch "
-                + env["arch"]
-                + " --config "
-                + ("Debug" if env["target"] != "template_release" else "Release")
-            )
-            sys.exit(1)
+            fail_missing_puerts_artifact(runtime_binary)
         installed = project_env.Install("bin/", [runtime_binary])
         if env["platform"] == "macos":
             project_env.AddPostAction(installed, _ensure_loader_rpath_action)

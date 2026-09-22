@@ -34,59 +34,41 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       targets: ${{ steps.select.outputs.targets }}
-      has_targets: ${{ steps.select.outputs.has_targets }}
       godot_versions: ${{ steps.select.outputs.godot_versions }}
-      has_godot_versions: ${{ steps.select.outputs.has_godot_versions }}
     steps:
       - id: select
         shell: bash
+        env:
+          INPUTS: ${{ toJSON(inputs) }}
         run: |
+          add_target() {
+            [[ $(jq -r ".build_$1" <<<"$INPUTS") == true ]] &&
+              targets=$(jq -c ". + [{platform:\"$2\",arch:\"$3\",os:\"$4\"}]" <<<"$targets")
+          }
+          add_godot() {
+            [[ $(jq -r ".build_godot_${1//./_}" <<<"$INPUTS") == true ]] &&
+              godot_versions=$(jq -c ". + [{api_version:\"$1\",godot_version:\"$2\"}]" <<<"$godot_versions")
+          }
+
           targets='[]'
-          if [[ "${{ inputs.build_windows_x86_64 }}" == "true" ]]; then
-            targets=$(jq -c '. + [{"platform":"windows","arch":"x86_64","os":"windows-2022"}]' <<<"$targets")
-          fi
-          if [[ "${{ inputs.build_macos_arm64 }}" == "true" ]]; then
-            targets=$(jq -c '. + [{"platform":"macos","arch":"arm64","os":"macos-14"}]' <<<"$targets")
-          fi
-          if [[ "${{ inputs.build_linux_x86_64 }}" == "true" ]]; then
-            targets=$(jq -c '. + [{"platform":"linux","arch":"x86_64","os":"ubuntu-22.04"}]' <<<"$targets")
-          fi
-          if [[ "${{ inputs.build_android_arm64 }}" == "true" ]]; then
-            targets=$(jq -c '. + [{"platform":"android","arch":"arm64","os":"ubuntu-22.04"}]' <<<"$targets")
-          fi
-          if [[ "${{ inputs.build_ios_arm64 }}" == "true" ]]; then
-            targets=$(jq -c '. + [{"platform":"ios","arch":"arm64","os":"macos-15"}]' <<<"$targets")
-          fi
-          if [[ "${{ inputs.build_web_wasm32 }}" == "true" ]]; then
-            targets=$(jq -c '. + [{"platform":"web","arch":"wasm32","os":"ubuntu-22.04"}]' <<<"$targets")
-          fi
-          echo "targets=$targets" >> "$GITHUB_OUTPUT"
-          if [[ "$targets" == "[]" ]]; then
-            echo "has_targets=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_targets=true" >> "$GITHUB_OUTPUT"
-          fi
+          add_target windows_x86_64 windows x86_64 windows-2022
+          add_target macos_arm64 macos arm64 macos-14
+          add_target linux_x86_64 linux x86_64 ubuntu-22.04
+          add_target android_arm64 android arm64 ubuntu-22.04
+          add_target ios_arm64 ios arm64 macos-15
+          add_target web_wasm32 web wasm32 ubuntu-22.04
 
           godot_versions='[]'
-          if [[ "${{ inputs.build_godot_4_5 }}" == "true" ]]; then
-            godot_versions=$(jq -c '. + [{"api_version":"4.5","godot_version":"4.5.2"}]' <<<"$godot_versions")
-          fi
-          if [[ "${{ inputs.build_godot_4_6 }}" == "true" ]]; then
-            godot_versions=$(jq -c '. + [{"api_version":"4.6","godot_version":"4.6.3"}]' <<<"$godot_versions")
-          fi
-          if [[ "${{ inputs.build_godot_4_7 }}" == "true" ]]; then
-            godot_versions=$(jq -c '. + [{"api_version":"4.7","godot_version":"4.7.0"}]' <<<"$godot_versions")
-          fi
+          add_godot 4.5 4.5.2
+          add_godot 4.6 4.6.3
+          add_godot 4.7 4.7.2
+
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
           echo "godot_versions=$godot_versions" >> "$GITHUB_OUTPUT"
-          if [[ "$godot_versions" == "[]" ]]; then
-            echo "has_godot_versions=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_godot_versions=true" >> "$GITHUB_OUTPUT"
-          fi
 
   build:
     needs: prepare
-    if: ${{ needs.prepare.outputs.has_targets == 'true' && needs.prepare.outputs.has_godot_versions == 'true' }}
+    if: ${{ needs.prepare.outputs.targets != '[]' && needs.prepare.outputs.godot_versions != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -113,7 +95,7 @@ jobs:
   merge:
     runs-on: ubuntu-22.04
     needs: [prepare, build]
-    if: ${{ needs.prepare.outputs.has_targets == 'true' && needs.prepare.outputs.has_godot_versions == 'true' }}
+    if: ${{ needs.prepare.outputs.targets != '[]' && needs.prepare.outputs.godot_versions != '[]' }}
     steps:
       - name: Merge Artifacts
         uses: actions/upload-artifact/merge@v4

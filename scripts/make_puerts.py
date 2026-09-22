@@ -15,28 +15,20 @@ from scons.puerts_matrix import ARCH_TO_PUERTS, PLATFORM_TO_PUERTS, SUPPORTED_BA
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PUERTS_REPO_DIR = REPO_ROOT / "thirdparty" / "puerts"
-UNITY_DIR = REPO_ROOT / "thirdparty" / "puerts" / "unity"
+UNITY_DIR = PUERTS_REPO_DIR / "unity"
 NATIVE_DIR = UNITY_DIR / "native"
-PAPI_LUA_OBJECT_NEW_FILE = PUERTS_REPO_DIR / "unity" / "native" / "papi-lua" / "source" / "CppObjectMapperLua.cpp"
-PAPI_LUA_OBJECT_NEW_PATCH = REPO_ROOT / "patches" / "papi-lua-object-new-nullptr.patch"
-PAPI_LUA_VALUE_REF_FILE = PUERTS_REPO_DIR / "unity" / "native" / "papi-lua" / "source" / "PesapiLuaImpl.cpp"
-PAPI_LUA_VALUE_REF_PATCH = REPO_ROOT / "patches" / "papi-lua-value-ref-release.patch"
-PAPI_V8_NODEJS_LINUX_RPATH_PATCH = REPO_ROOT / "patches" / "papi-v8-nodejs-linux-origin-rpath.patch"
+NODE_LIB_DIR = NATIVE_DIR / "papi-nodejs" / ".backends" / "papi-nodejs" / "lib"
+BIN_DIR = REPO_ROOT / "bin"
+PATCHES_DIR = REPO_ROOT / "patches"
 
 BACKEND_ALIASES = {
     "core": "puerts",
-    "puerts": "puerts",
     "v8": "papi-v8",
-    "papi-v8": "papi-v8",
     "nodejs": "papi-nodejs",
-    "papi-nodejs": "papi-nodejs",
     "quickjs": "papi-quickjs",
-    "papi-quickjs": "papi-quickjs",
     "lua": "papi-lua",
-    "papi-lua": "papi-lua",
 }
-
-DEFAULT_BACKENDS = ["core", "v8", "nodejs", "quickjs", "lua"]
+CANONICAL_BACKENDS = set(BACKEND_ALIASES.values())
 
 DEFAULT_ARCH = {
     "windows": "x86_64",
@@ -46,6 +38,18 @@ DEFAULT_ARCH = {
     "ios": "arm64",
     "web": "wasm32",
 }
+
+# Patches applied to the puerts submodule before building.
+# Each entry: (patch file name under patches/, applies?(platform, backends)).
+PATCHES = [
+    ("papi-lua-object-new-nullptr", lambda platform, backends: "papi-lua" in backends),
+    ("papi-lua-value-ref-release", lambda platform, backends: "papi-lua" in backends),
+    (
+        "papi-v8-nodejs-linux-origin-rpath",
+        lambda platform, backends: platform == "linux" and bool(backends & {"papi-v8", "papi-nodejs"}),
+    ),
+]
+PATCH_APPLY_FLAGS = ["--ignore-whitespace", "--ignore-space-change"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,16 +69,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--backends",
-        default=",".join(DEFAULT_BACKENDS),
+        default=",".join(BACKEND_ALIASES),
         help="Comma-separated backends: core,v8,nodejs,quickjs,lua",
-    )
-    parser.add_argument("--websocket", default="0", help="Forwarded websocket option for puerts CLI.")
-    parser.add_argument("--rebuild", action="store_true", help="Clean and rebuild in puerts CLI.")
-    parser.add_argument("--skip-npm-install", action="store_true", help="Skip npm ci in unity directory.")
-    parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="Fail when a requested backend is unsupported on the target platform.",
     )
     return parser.parse_args()
 
@@ -99,86 +95,27 @@ def run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> Non
     subprocess.run(resolved, cwd=str(cwd), env=env, check=True)
 
 
-def append_env_flags(env: dict[str, str], key: str, flags: str) -> None:
-    current = env.get(key, "").strip()
-    env[key] = f"{current} {flags}".strip() if current else flags
+def ensure_patch(name: str) -> None:
+    """Apply a patch to the puerts submodule; skip if already applied, fail otherwise."""
+    patch_file = PATCHES_DIR / f"{name}.patch"
+    if not patch_file.is_file():
+        raise FileNotFoundError(f"patch file not found: {patch_file}")
 
-
-def ensure_papi_lua_constructor_patch() -> None:
-    marker = "Null constructor results can happen under low-memory conditions."
-    if not PAPI_LUA_OBJECT_NEW_FILE.is_file():
-        raise FileNotFoundError(f"Papi Lua source not found: {PAPI_LUA_OBJECT_NEW_FILE}")
-
-    def has_patch(content: str) -> bool:
-        return marker in content or (
-            "void* ptr = class_definition->Initialize(" in content
-            and "if (ptr == nullptr)" in content
-            and "BindCppObject(L, class_definition, ptr, false);" in content
+    def applies_cleanly(*extra: str) -> bool:
+        result = subprocess.run(
+            [resolve_executable("git"), "apply", "--check", *extra, *PATCH_APPLY_FLAGS, str(patch_file.resolve())],
+            cwd=PUERTS_REPO_DIR,
+            capture_output=True,
         )
+        return result.returncode == 0
 
-    source_text = PAPI_LUA_OBJECT_NEW_FILE.read_text(encoding="utf-8", errors="replace")
-    if has_patch(source_text):
-        print("[make_puerts] papi-lua constructor patch already present, skip.")
-        return
-    if not PAPI_LUA_OBJECT_NEW_PATCH.is_file():
-        raise FileNotFoundError(f"papi-lua constructor patch not found: {PAPI_LUA_OBJECT_NEW_PATCH}")
-    run(
-        ["git", "apply", "--ignore-whitespace", "--ignore-space-change", str(PAPI_LUA_OBJECT_NEW_PATCH.resolve())],
-        PUERTS_REPO_DIR,
-    )
-    print("[make_puerts] papi-lua constructor patch applied.")
-
-
-def ensure_papi_lua_value_ref_patch() -> None:
-    markers = ("~pesapi_value_ref__()", "value_ref->value_ref = LUA_NOREF;")
-    if not PAPI_LUA_VALUE_REF_FILE.is_file():
-        raise FileNotFoundError(f"Papi Lua source not found: {PAPI_LUA_VALUE_REF_FILE}")
-
-    source_text = PAPI_LUA_VALUE_REF_FILE.read_text(encoding="utf-8", errors="replace")
-    if all(marker in source_text for marker in markers):
-        print("[make_puerts] papi-lua value-ref patch already present, skip.")
-        return
-    if not PAPI_LUA_VALUE_REF_PATCH.is_file():
-        raise FileNotFoundError(f"papi-lua value-ref patch not found: {PAPI_LUA_VALUE_REF_PATCH}")
-    run(
-        ["git", "apply", "--ignore-space-change", "--whitespace=fix", str(PAPI_LUA_VALUE_REF_PATCH.resolve())],
-        PUERTS_REPO_DIR,
-    )
-    print("[make_puerts] papi-lua value-ref patch applied.")
-
-
-def ensure_papi_v8_nodejs_linux_rpath_patch() -> None:
-    markers = (
-        'BUILD_RPATH "\\$ORIGIN"',
-        'INSTALL_RPATH "\\$ORIGIN"',
-    )
-    targets = [
-        PUERTS_REPO_DIR / "unity" / "native" / "papi-v8" / "CMakeLists.txt",
-        PUERTS_REPO_DIR / "unity" / "native" / "papi-nodejs" / "CMakeLists.txt",
-    ]
-    for target in targets:
-        if not target.is_file():
-            raise FileNotFoundError(f"Papi CMake file not found: {target}")
-
-    def has_patch(content: str) -> bool:
-        return all(marker in content for marker in markers)
-
-    if all(has_patch(target.read_text(encoding="utf-8", errors="replace")) for target in targets):
-        print("[make_puerts] papi-v8/nodejs linux rpath patch already present, skip.")
-        return
-    if not PAPI_V8_NODEJS_LINUX_RPATH_PATCH.is_file():
-        raise FileNotFoundError(f"papi-v8/nodejs linux rpath patch not found: {PAPI_V8_NODEJS_LINUX_RPATH_PATCH}")
-    run(
-        [
-            "git",
-            "apply",
-            "--ignore-whitespace",
-            "--ignore-space-change",
-            str(PAPI_V8_NODEJS_LINUX_RPATH_PATCH.resolve()),
-        ],
-        PUERTS_REPO_DIR,
-    )
-    print("[make_puerts] papi-v8/nodejs linux rpath patch applied.")
+    if applies_cleanly():
+        run(["git", "apply", *PATCH_APPLY_FLAGS, str(patch_file.resolve())], PUERTS_REPO_DIR)
+        print(f"[make_puerts] patch {name} applied.")
+    elif applies_cleanly("--reverse"):
+        print(f"[make_puerts] patch {name} already applied, skip.")
+    else:
+        raise RuntimeError(f"patch {name} does not apply cleanly; the puerts submodule may have drifted.")
 
 
 def normalize_backends(raw: str) -> list[str]:
@@ -187,15 +124,15 @@ def normalize_backends(raw: str) -> list[str]:
         name = token.strip().lower()
         if not name:
             continue
-        if name not in BACKEND_ALIASES:
+        canonical = BACKEND_ALIASES.get(name, name)
+        if canonical not in CANONICAL_BACKENDS:
             raise ValueError(f"Unsupported backend token: {token}")
-        canonical = BACKEND_ALIASES[name]
         if canonical not in result:
             result.append(canonical)
     return result
 
 
-def build_backend(platform: str, puerts_arch: str, config: str, backend: str, websocket: str, rebuild: bool) -> None:
+def build_backend(platform: str, puerts_arch: str, config: str, backend: str) -> None:
     backend_dir = NATIVE_DIR / backend
     if not backend_dir.is_dir():
         raise FileNotFoundError(f"Backend directory not found: {backend_dir}")
@@ -210,37 +147,42 @@ def build_backend(platform: str, puerts_arch: str, config: str, backend: str, we
         puerts_arch,
         "--config",
         config,
-        "--websocket",
-        websocket,
     ]
-    if rebuild:
-        cmd.append("--rebuild")
 
     env = os.environ.copy()
     if platform == "android":
         env.setdefault("ANDROID_NDK", str(Path.home() / "android-ndk-r27d"))
     elif platform == "web":
-        append_env_flags(env, "CFLAGS", "-pthread -fPIC")
-        append_env_flags(env, "CXXFLAGS", "-pthread -fPIC")
-        append_env_flags(env, "LDFLAGS", "-pthread")
+        for key, flags in (("CFLAGS", "-pthread -fPIC"), ("CXXFLAGS", "-pthread -fPIC"), ("LDFLAGS", "-pthread")):
+            env[key] = f"{env.get(key, '')} {flags}".strip()
 
     run(cmd, backend_dir, env)
 
 
-def split_requested_backends(platform: str, requested: list[str], strict: bool) -> tuple[list[str], list[str]]:
-    supported = SUPPORTED_BACKENDS[platform]
-    build_list: list[str] = []
-    skipped: list[str] = []
-    for backend in requested:
-        if backend in supported:
-            build_list.append(backend)
-            continue
-        message = f"[make_puerts] skip unsupported backend {backend} on {platform}"
-        if strict:
-            raise ValueError(message)
-        print(message)
-        skipped.append(backend)
-    return build_list, skipped
+def copy_nodejs_deps(platform: str, arch: str) -> None:
+    """Stage Node.js backend runtime/static dependencies into bin/."""
+    if platform == "windows":
+        sources, dst_dir = [NODE_LIB_DIR / "Win64" / "libnode.dll"], BIN_DIR
+    elif platform == "linux":
+        sources, dst_dir = [NODE_LIB_DIR / "Linux" / "libnode.so.93"], BIN_DIR
+    elif platform == "macos":
+        sources, dst_dir = (
+            [NODE_LIB_DIR / ("macOS_arm64" if arch == "arm64" else "macOS") / "libnode.93.dylib"],
+            BIN_DIR,
+        )
+    elif platform == "ios":
+        sources, dst_dir = sorted((NODE_LIB_DIR / "iOS").glob("*.a")), BIN_DIR / "ios-nodejs"
+    else:  # web/android: nothing to copy
+        return
+
+    if not sources:
+        raise FileNotFoundError(f"no nodejs dependency archives found under {NODE_LIB_DIR}")
+    for src in sources:
+        if not src.is_file():
+            raise FileNotFoundError(f"nodejs dependency not found: {src}")
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst_dir / src.name)
+        print(f"[make_puerts] copied {src} -> {dst_dir / src.name}")
 
 
 def main() -> int:
@@ -250,7 +192,11 @@ def main() -> int:
         print(f"[make_puerts] unity directory not found: {UNITY_DIR}", file=sys.stderr)
         return 2
 
-    backends = normalize_backends(args.backends)
+    try:
+        backends = normalize_backends(args.backends)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     if not backends:
         print("[make_puerts] no backend selected.", file=sys.stderr)
         return 2
@@ -261,42 +207,33 @@ def main() -> int:
         print(f"[make_puerts] unsupported arch mapping for platform={args.platform}, arch={arch}", file=sys.stderr)
         return 2
 
-    if args.platform == "linux" and any(backend in {"papi-v8", "papi-nodejs"} for backend in backends):
-        ensure_papi_v8_nodejs_linux_rpath_patch()
-    if "papi-lua" in backends:
-        ensure_papi_lua_constructor_patch()
-        ensure_papi_lua_value_ref_patch()
+    for name, applies in PATCHES:
+        if applies(args.platform, set(backends)):
+            ensure_patch(name)
 
-    if not args.skip_npm_install:
-        run(["npm", "ci"], UNITY_DIR)
+    run(["npm", "ci"], UNITY_DIR)
 
-    try:
-        build_list, skipped = split_requested_backends(args.platform, backends, args.strict)
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
+    supported = SUPPORTED_BACKENDS[args.platform]
+    skipped = [backend for backend in backends if backend not in supported]
+    for backend in skipped:
+        print(f"[make_puerts] skip unsupported backend {backend} on {args.platform}")
+    build_list = [backend for backend in backends if backend in supported]
 
-    built: list[str] = []
     for backend in build_list:
-        build_backend(
-            platform=args.platform,
-            puerts_arch=puerts_arch,
-            config=args.config,
-            backend=backend,
-            websocket=args.websocket,
-            rebuild=args.rebuild,
-        )
-        built.append(backend)
+        build_backend(args.platform, puerts_arch, args.config, backend)
 
-    if not built:
+    if not build_list:
         print("[make_puerts] no backend was built.", file=sys.stderr)
         return 2
+
+    if "papi-nodejs" in build_list:
+        copy_nodejs_deps(args.platform, arch)
 
     print("[make_puerts] summary")
     print(f"  platform: {args.platform}")
     print(f"  arch: {arch} -> {puerts_arch}")
     print(f"  config: {args.config}")
-    print(f"  built: {', '.join(built)}")
+    print(f"  built: {', '.join(build_list)}")
     if skipped:
         print(f"  skipped: {', '.join(skipped)}")
 
