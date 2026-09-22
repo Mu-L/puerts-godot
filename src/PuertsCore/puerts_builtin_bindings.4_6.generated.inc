@@ -4033,7 +4033,7 @@ inline godot::Vector2 vector2_one_constant_generated() {
 	return { 1, 1 };
 }
 inline godot::Vector2 vector2_inf_constant_generated() {
-	return { Math_INF, Math_INF };
+	return { INFINITY, INFINITY };
 }
 inline godot::Vector2 vector2_left_constant_generated() {
 	return { -1, 0 };
@@ -4358,7 +4358,7 @@ inline godot::Vector3 vector3_one_constant_generated() {
 	return { 1, 1, 1 };
 }
 inline godot::Vector3 vector3_inf_constant_generated() {
-	return { Math_INF, Math_INF, Math_INF };
+	return { INFINITY, INFINITY, INFINITY };
 }
 inline godot::Vector3 vector3_left_constant_generated() {
 	return { -1, 0, 0 };
@@ -4718,7 +4718,7 @@ inline godot::Vector4 vector4_one_constant_generated() {
 	return { 1, 1, 1, 1 };
 }
 inline godot::Vector4 vector4_inf_constant_generated() {
-	return { Math_INF, Math_INF, Math_INF, Math_INF };
+	return { INFINITY, INFINITY, INFINITY, INFINITY };
 }
 inline void register_vector4_type_generated() {
 	puerts::define_type<godot::Vector4>()

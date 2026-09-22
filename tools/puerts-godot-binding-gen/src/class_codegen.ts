@@ -53,7 +53,7 @@ function builtinConstantExpression(value: string): string {
 		.replace(/\)$/, " }")
 		.replace(/-2147483648\b/g, "INT32_MIN")
 		.replace(/\b2147483647\b/g, "INT32_MAX")
-		.replace(/\binf\b/g, "Math_INF");
+		.replace(/\binf\b/g, "INFINITY");
 }
 
 function constantExpression(constant: ApiConstant, classSource: ClassSource): string {
