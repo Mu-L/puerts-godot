@@ -66,7 +66,11 @@ DEFAULT_BACKENDS = "lua,quickjs,v8"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run runtime tests for puerts-godot.")
-    parser.add_argument("--godot", required=True, help="Path to the Godot executable, or a command name on PATH.")
+    parser.add_argument(
+        "--godot",
+        required=True,
+        help="Godot executable: a file path, a command name on PATH, or via the GODOT/GODOT4 environment variable.",
+    )
     parser.add_argument(
         "--platform",
         default="",
@@ -94,9 +98,11 @@ def detect_platform() -> str:
 
 
 def resolve_godot(value: str) -> Path | None:
-    candidate = Path(value).expanduser()
-    if candidate.is_file():
-        return candidate.resolve()
+    for candidate in (value, os.environ.get("GODOT", ""), os.environ.get("GODOT4", "")):
+        if candidate:
+            path = Path(candidate).expanduser()
+            if path.is_file():
+                return path.resolve()
     found = shutil.which(value)
     return Path(found) if found else None
 

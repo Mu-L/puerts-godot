@@ -39,8 +39,6 @@ DEFAULT_ARCH = {
     "web": "wasm32",
 }
 
-# Patches applied to the puerts submodule before building.
-# Each entry: (patch file name under patches/, applies?(platform, backends)).
 PATCHES = [
     ("papi-lua-object-new-nullptr", lambda platform, backends: "papi-lua" in backends),
     ("papi-lua-value-ref-release", lambda platform, backends: "papi-lua" in backends),
@@ -172,7 +170,7 @@ def copy_nodejs_deps(platform: str, arch: str) -> None:
         )
     elif platform == "ios":
         sources, dst_dir = sorted((NODE_LIB_DIR / "iOS").glob("*.a")), BIN_DIR / "ios-nodejs"
-    else:  # web/android: nothing to copy
+    else:
         return
 
     if not sources:
