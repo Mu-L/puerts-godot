@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2026 realybin and contributors
+// SPDX-FileCopyrightText: Copyright (c) 2026 puerts-godot contributors
 // SPDX-License-Identifier: BSD-3-Clause
 
 export type ApiOperator = {

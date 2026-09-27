@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2026 realybin and contributors
+// SPDX-FileCopyrightText: Copyright (c) 2026 puerts-godot contributors
 // SPDX-License-Identifier: BSD-3-Clause
 
 import {normalizeOperators} from "../../puerts-godot-operator-model/index.js";

@@ -27,7 +27,7 @@ Files: README.md
  tests/*.gdextension
  tests/*.gdextension.uid
  tests/tests/*
-Copyright: 2026-present realybin and contributors
+Copyright: 2026-present puerts-godot contributors
 License: BSD-3-clause
 
 Files: godot-cpp/*
